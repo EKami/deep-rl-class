@@ -1,0 +1,7 @@
+
+# pixi environments
+.pixi
+.ipynb_checkpoints
+*.egg-info
+ppo-LunarLander-v2.zip
+

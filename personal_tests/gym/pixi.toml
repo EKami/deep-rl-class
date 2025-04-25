@@ -1,0 +1,19 @@
+[workspace]
+authors = ["Tuatini Godard <email@tuatini.me>"]
+channels = ["conda-forge"]
+name = "gym"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.4"
+
+[dependencies]
+python = "3.13.*"
+pytorch = "*"
+matplotlib = ">=3.10.1,<4"
+
+[pypi-dependencies]
+pillow = "*"
+stable-baselines3 = "*"
+gymnasium = { version = "*", extras = ["box2d"] }
