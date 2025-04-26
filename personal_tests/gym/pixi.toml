@@ -12,8 +12,10 @@ cuda = "12.4"
 python = "3.13.*"
 pytorch = "*"
 matplotlib = ">=3.10.1,<4"
+opencv = ">=4.11.0,<5"
 
 [pypi-dependencies]
 pillow = "*"
 stable-baselines3 = "*"
 gymnasium = { version = "*", extras = ["box2d"] }
+ale-py = "*"

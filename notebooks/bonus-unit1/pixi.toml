@@ -9,17 +9,18 @@ version = "0.1.0"
 cuda = "12.1"
 
 [dependencies]
-python = "==3.10.12"
+python = "3.10.*"
 jupyterlab="*"
 ujson="*"
-#pytorch = "*"
-#pyvirtualdisplay = ">=3.0,<4"
-#ipywidgets = "*"
-#moviepy = ">=1.0.3,<2"
+pytorch = "*"
+numpy="==1.23.5"
+pyvirtualdisplay = ">=3.0,<4"
+ipywidgets = "*"
+moviepy = ">=1.0.3,<2"
 
 [pypi-dependencies]
-mlagents_envs = { git = "https://github.com/Unity-Technologies/ml-agents.git", branch = "release_22", subdirectory = "ml-agents-envs" }
-mlagents = { git = "https://github.com/Unity-Technologies/ml-agents.git", branch = "release_22", subdirectory = "ml-agents" }
+mlagents_envs = { git = "https://github.com/EKami/ml-agents.git", branch = "release_22-fixed", subdirectory = "ml-agents-envs" }
+mlagents = { git = "https://github.com/EKami/ml-agents.git", branch = "release_22-fixed", subdirectory = "ml-agents" }
 swig = "*"
 stable-baselines3 = "==2.0.0"
 gymnasium = { version = "*", extras = ["box2d"] }
