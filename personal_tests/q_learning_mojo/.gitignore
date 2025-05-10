@@ -1,0 +1,6 @@
+replay.mp4
+# pixi environments
+.pixi
+*.egg-info
+# magic environments
+.magic
