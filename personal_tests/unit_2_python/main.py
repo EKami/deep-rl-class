@@ -111,7 +111,7 @@ def train(
     return Qtable
 
 
-def evaluate_agent(env, max_steps, n_eval_episodes, Q, seed):
+def evaluate_agent(env, max_steps, n_eval_episodes, Q, seed=[]):
     """
     Evaluate the agent for ``n_eval_episodes`` episodes and returns average reward and std of reward.
     :param env: The evaluation environment
@@ -173,14 +173,12 @@ def frozenlake_q_learning():
     # Environment parameters
     max_steps = 99  # Max steps per episode
     gamma = 0.95  # Discounting rate
-    eval_seed = []  # The evaluation seed of the environment
 
     # Exploration parameters
     max_epsilon = 1.0  # Exploration probability at start
     min_epsilon = 0.05  # Minimum exploration probability
     decay_rate = 0.0005  # Exponential decay rate for exploration prob
 
-    initialize_q_table(state_space, action_space)
     Qtable_frozenlake = initialize_q_table(state_space, action_space)
     Qtable_frozenlake = train(
         n_training_episodes,
@@ -193,24 +191,74 @@ def frozenlake_q_learning():
         gamma,
         learning_rate,
     )
+    return env, max_steps, n_eval_episodes, Qtable_frozenlake
+
+
+def taxi_q_learning():
+    env_id = "Taxi-v3"
+    env = gym.make(env_id, render_mode="rgb_array")
+    print("_____OBSERVATION SPACE_____ \n")
+    print("Observation Space", env.observation_space)
+    print("Sample observation", env.observation_space.sample())
+    print("\n _____ACTION SPACE_____ \n")
+    print("Action Space Shape", env.action_space.n)
+    print("Action Space Sample", env.action_space.sample())
+
+    state_space = env.observation_space.n
+    print("There are ", state_space, " possible states")
+
+    action_space = env.action_space.n
+    print("There are ", action_space, " possible actions")
+
+    # Training parameters
+    n_training_episodes = 25000  # Total training episodes
+    learning_rate = 0.7  # Learning rate
+
+    # Environment parameters
+    max_steps = 99  # Max steps per episode
+    gamma = 0.95  # Discounting rate
+
+    # Exploration parameters
+    max_epsilon = 1.0  # Exploration probability at start
+    min_epsilon = 0.05  # Minimum exploration probability
+    decay_rate = 0.005  # Exponential decay rate for exploration prob
+
+    # Evaluation parameters
+    n_eval_episodes = 100
+
+    Qtable_taxi = initialize_q_table(state_space, action_space)
+    print(Qtable_taxi)
+    print("Q-table shape: ", Qtable_taxi.shape)
+
+    Qtable_taxi = train(
+        n_training_episodes,
+        min_epsilon,
+        max_epsilon,
+        decay_rate,
+        env,
+        max_steps,
+        Qtable_taxi,
+        gamma,
+        learning_rate,
+    )
+    return env, max_steps, n_eval_episodes, Qtable_taxi
+
+
+def main():
+    print("Starting the main function")
+    # env, max_steps, n_eval_episodes, q_table = frozenlake_q_learning()
+    env, max_steps, n_eval_episodes, q_table = taxi_q_learning()
 
     # Evaluate our Agent
-    mean_reward, std_reward = evaluate_agent(
-        env, max_steps, n_eval_episodes, Qtable_frozenlake, eval_seed
-    )
+    mean_reward, std_reward = evaluate_agent(env, max_steps, n_eval_episodes, q_table)
     print(f"Mean_reward={mean_reward:.2f} +/- {std_reward:.2f}")
 
     # Record a video now
     cur_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     video_path = cur_dir / "replay.mp4"
     video_fps = 1
-    out_directory = record_video(env, Qtable_frozenlake, video_path, video_fps)
+    out_directory = record_video(env, q_table, video_path, video_fps)
     print("Video saved at: ", out_directory)
-
-
-def main():
-    print("Starting the main function")
-    frozenlake_q_learning()
 
 
 if __name__ == "__main__":
