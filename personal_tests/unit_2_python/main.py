@@ -8,6 +8,7 @@ import gymnasium as gym
 import random
 import imageio
 from tqdm import tqdm
+from PIL import Image
 
 
 def record_video(env, Qtable, out_directory, fps=1):
@@ -27,14 +28,25 @@ def record_video(env, Qtable, out_directory, fps=1):
     while not terminated or truncated:
         # Take the action (index) that have the maximum expected future reward given that state
         action = np.argmax(Qtable[state][:])
-        state, reward, terminated, truncated, info = env.step(
-            action
-        )  # We directly put next_state = state for recording logic
+        # We directly put next_state = state for recording logic
+        state, _, terminated, truncated, _ = env.step(action)
         img = env.render()
         images.append(img)
-    imageio.mimsave(
-        out_directory, [np.array(img) for i, img in enumerate(images)], fps=fps
-    )
+
+    # Convert list to numpy array for batch processing
+    images = np.array(images)
+    h, w = images.shape[1:3]
+    # Calculate new dimensions that are divisible by 16
+    new_h = ((h + 15) // 16) * 16
+    new_w = ((w + 15) // 16) * 16
+
+    # Resize all images at once if needed
+    if new_h != h or new_w != w:
+        images = np.array(
+            [np.array(Image.fromarray(img).resize((new_w, new_h))) for img in images]
+        )
+
+    imageio.mimsave(out_directory, images, fps=fps)
     return out_directory
 
 
@@ -82,13 +94,12 @@ def train(
             -decay_rate * episode
         )
         # Reset the environment
-        state, info = env.reset()
-        step = 0
+        state, _ = env.reset()
         terminated = False
         truncated = False
 
         # repeat
-        for step in range(max_steps):
+        for _ in range(max_steps):
             # Choose the action At using epsilon greedy policy
             action = epsilon_greedy_policy(env, Qtable, state, epsilon)
 
@@ -123,18 +134,17 @@ def evaluate_agent(env, max_steps, n_eval_episodes, Q, seed=[]):
     episode_rewards = []
     for episode in tqdm(range(n_eval_episodes)):
         if seed:
-            state, info = env.reset(seed=seed[episode])
+            state, _ = env.reset(seed=seed[episode])
         else:
-            state, info = env.reset()
-        step = 0
+            state, _ = env.reset()
         truncated = False
         terminated = False
         total_rewards_ep = 0
 
-        for step in range(max_steps):
+        for _ in range(max_steps):
             # Take the action (index) that have the maximum expected future reward given that state
             action = greedy_policy(Q, state)
-            new_state, reward, terminated, truncated, info = env.step(action)
+            new_state, reward, terminated, truncated, _ = env.step(action)
             total_rewards_ep += reward
 
             if terminated or truncated:
@@ -227,8 +237,10 @@ def taxi_q_learning():
     n_eval_episodes = 100
 
     Qtable_taxi = initialize_q_table(state_space, action_space)
+    print("Q-table taxi: ", Qtable_taxi.shape)
+    np.set_printoptions(precision=2, suppress=True)
+    print("Initial Q-table:")
     print(Qtable_taxi)
-    print("Q-table shape: ", Qtable_taxi.shape)
 
     Qtable_taxi = train(
         n_training_episodes,
@@ -241,6 +253,8 @@ def taxi_q_learning():
         gamma,
         learning_rate,
     )
+    print("Q-table taxi (after training): ", Qtable_taxi.shape)
+    print(Qtable_taxi)
     return env, max_steps, n_eval_episodes, Qtable_taxi
 
 
