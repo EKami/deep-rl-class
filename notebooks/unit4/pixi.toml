@@ -1,0 +1,36 @@
+[workspace]
+authors = ["Tuatini Godard <email@tuatini.me>"]
+channels = ["conda-forge"]
+name = "unit1"
+platforms = ["linux-64", "osx-arm64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.4"
+
+[dependencies]
+python = "3.12.*"
+jupyterlab = "*"
+pytorch = "*"
+numpy = "*"
+ipywidgets = "*"
+tqdm = "*"
+moviepy = ">=1.0.3,<2"
+pygame = "*"
+huggingface_hub = "*"
+pyyaml = "*"
+imageio = "*"
+imageio-ffmpeg = "*"
+pyglet = ">=2.1.5,<3"
+opencv = ">=4.11.0,<5"
+pyopengl = ">=3.1.9,<4"
+ffmpeg = ">=7.1.1,<8"
+xvfbwrapper = ">=0.2.10,<0.3"
+#pyglet = "1.5.*"
+
+[pypi-dependencies]
+gymnasium = { version = "*", extras = ["atari"] }
+pyvirtualdisplay = ">=3.0, <4"
+rl-zoo3 = { git = "https://github.com/DLR-RM/rl-baselines3-zoo" }
+ple = { git = "https://github.com/ntasfi/PyGame-Learning-Environment.git" }
+gym-games = { git = "https://github.com/simoninithomas/gym-games" }
