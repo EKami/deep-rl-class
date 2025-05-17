@@ -1,0 +1,7 @@
+
+# pixi environments
+.pixi
+replay.mp4
+.ipynb_checkpoints
+*.egg-info
+

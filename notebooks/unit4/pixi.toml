@@ -9,7 +9,7 @@ version = "0.1.0"
 cuda = "12.4"
 
 [dependencies]
-python = "3.12.*"
+python = "3.11.*"
 jupyterlab = "*"
 pytorch = "*"
 numpy = "*"
@@ -26,11 +26,9 @@ opencv = ">=4.11.0,<5"
 pyopengl = ">=3.1.9,<4"
 ffmpeg = ">=7.1.1,<8"
 xvfbwrapper = ">=0.2.10,<0.3"
+optuna = ">=4.3.0,<5"
 #pyglet = "1.5.*"
 
 [pypi-dependencies]
 gymnasium = { version = "*", extras = ["atari"] }
 pyvirtualdisplay = ">=3.0, <4"
-rl-zoo3 = { git = "https://github.com/DLR-RM/rl-baselines3-zoo" }
-ple = { git = "https://github.com/ntasfi/PyGame-Learning-Environment.git" }
-gym-games = { git = "https://github.com/simoninithomas/gym-games" }
