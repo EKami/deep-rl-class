@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from tqdm import tqdm
+import json
 
 from typing import Any, Dict
 from collections import deque
@@ -23,6 +24,9 @@ from optuna.samplers import TPESampler
 from optuna.visualization import plot_optimization_history, plot_param_importances
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+BEST_MODEL_PATH = "best_cartpole_model.pth"
+best_mean_reward = float("-inf")
 
 
 class Policy(nn.Module):
@@ -294,7 +298,7 @@ def objective(env, s_size, a_size):
         :param trial: Optuna trial object
         :return: Mean episodic reward after training
         """
-
+        global best_mean_reward
         hyperparameters = sample_params(env.spec.id, s_size, a_size, trial)
         cartpole_policy = Policy(
             hyperparameters["state_space"],
@@ -341,7 +345,18 @@ def objective(env, s_size, a_size):
             cartpole_policy,
         )
 
-        return eval_callback.last_mean_reward
+        # Save the best model and std_reward so far
+        if mean_reward > best_mean_reward:
+            best_mean_reward = mean_reward
+            torch.save(
+                {
+                    "state_dict": cartpole_policy.state_dict(),
+                    "std_reward": std_reward,
+                },
+                BEST_MODEL_PATH,
+            )
+
+        return mean_reward
 
     return inner
 
@@ -396,7 +411,31 @@ def cartpole():
     except KeyboardInterrupt:
         pass
 
-    return env_id, cartpole_policy, mean_reward, std_reward
+    print("Number of finished trials: ", len(study.trials))
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print(f"  Value: {trial.value}")
+
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print(f"    {key}: {value}")
+
+    best_params = trial.params
+    # Recreate the best model
+    best_policy = Policy(
+        s_size,
+        a_size,
+        best_params["net_arch"],
+        best_params["n_fc_layers"],
+    ).to(device)
+    checkpoint = torch.load(BEST_MODEL_PATH)
+    best_policy.load_state_dict(checkpoint["state_dict"])
+    std_reward = checkpoint["std_reward"]
+    mean_reward = trial.value
+
+    return env_id, best_policy, mean_reward, std_reward
 
 
 def main():
