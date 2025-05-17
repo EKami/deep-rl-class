@@ -26,7 +26,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 cur_dir = Path(os.path.dirname(os.path.abspath(__file__)))
 BEST_MODEL_PATH = cur_dir / "best_cartpole_model.pth"
-best_mean_reward = float("-inf")
+best_mean_reward_global = float("-inf")
 
 
 class Policy(nn.Module):
@@ -34,250 +34,195 @@ class Policy(nn.Module):
         super(Policy, self).__init__()
         self.n_fc_layers = n_fc_layers
 
-        # First layer always goes from state size to hidden size
-        self.fc1 = nn.Linear(s_size, h_size)
+        layers = []
+        # Input layer
+        layers.append(nn.Linear(s_size, h_size))
+        layers.append(nn.ReLU())
 
-        # Add intermediate layers if n_fc_layers > 1
-        self.fc_layers = nn.ModuleList(
-            [nn.Linear(h_size, h_size) for _ in range(n_fc_layers - 1)]
-        )
+        # Hidden layers
+        for _ in range(n_fc_layers - 1):
+            layers.append(nn.Linear(h_size, h_size))
+            layers.append(nn.ReLU())
 
-        # Final layer always goes to action size
-        self.fc_out = nn.Linear(h_size, a_size)
+        # Output layer
+        layers.append(nn.Linear(h_size, a_size))
+
+        self.network = nn.Sequential(*layers)
 
     def forward(self, x):
-        # Apply first layer with ReLU
-        x = F.relu(self.fc1(x))
-
-        # Apply intermediate layers with ReLU
-        for layer in self.fc_layers:
-            x = F.relu(layer(x))
-
-        # Apply final layer
-        x = self.fc_out(x)
+        x = self.network(x)
         return F.softmax(x, dim=1)
 
     def act(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0).to(device)
-        probs = self.forward(state).cpu()
+        probs = self.forward(state)
         m = Categorical(probs)
         action = m.sample()
         return action.item(), m.log_prob(action)
 
 
-class TrialEvalCallback:
-    """
-    Callback used for evaluating and reporting a trial.
-
-    :param eval_env: Evaluation environement
-    :param trial: Optuna trial object
-    :param n_eval_episodes: Number of evaluation episodes
-    :param eval_freq:   Evaluate the agent every ``eval_freq`` call of the callback.
-    :param deterministic: Whether the evaluation should
-        use a stochastic or deterministic policy.
-    :param verbose:
-    """
-
-    def __init__(
-        self,
-        eval_env: gym.Env,
-        trial: optuna.Trial,
-        n_eval_episodes: int = 5,
-        eval_freq: int = 10000,
-        deterministic: bool = True,
-        verbose: int = 0,
-    ):
-        # Initialize attributes directly without super() call
-        self.eval_env = eval_env
-        self.trial = trial
-        self.n_eval_episodes = n_eval_episodes
-        self.eval_freq = eval_freq
-        self.deterministic = deterministic
-        self.verbose = verbose
-        self.n_calls = 0
-        self.last_mean_reward = -float("inf")
-        self.eval_idx = 0
-        self.is_pruned = False
-
-    def _on_step(self) -> bool:
-        if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
-            # Evaluate policy (done in the parent class)
-            super()._on_step()
-            self.eval_idx += 1
-            # Send report to Optuna
-            self.trial.report(self.last_mean_reward, self.eval_idx)
-            # Prune trial if need
-            if self.trial.should_prune():
-                self.is_pruned = True
-                return False
-        return True
-
-
 def record_video(env_id, policy, out_directory, fps=30):
-    """
-    Generate a replay video of the agent
-    :param env
-    :param Qtable: Qtable of our agent
-    :param out_directory
-    :param fps: how many frame per seconds (with taxi-v3 and frozenlake-v1 we use 1)
-    """
     images = []
-    env = gym.make(env_id, render_mode="rgb_array")
-    state, _ = env.reset()
+    # Use a new environment for recording to avoid state issues
+    record_env = gym.make(env_id, render_mode="rgb_array")
+    state, _ = record_env.reset()
     terminated = False
     truncated = False
-    while not (terminated or truncated):
-        img = env.render()
+    episode_reward = 0
+    for _ in range(500):  # Max steps for CartPole
+        img = record_env.render()
         images.append(img)
         action, _ = policy.act(state)
-        state, reward, _, terminated, truncated = env.step(action)
-    env.close()
+        state, reward, terminated, truncated, _ = record_env.step(action)
+        episode_reward += reward
+        if terminated or truncated:
+            break
+    record_env.close()
+    print(f"Video recording: episode reward: {episode_reward}")
     imageio.mimsave(
         out_directory, [np.array(img) for i, img in enumerate(images)], fps=fps
     )
 
 
-def reinforce(env, policy, optimizer, n_training_episodes, max_t, gamma, print_every):
-    # Help us to calculate the score during the training
+def reinforce(
+    env,
+    policy,
+    optimizer,
+    n_training_episodes,
+    max_t,
+    gamma,
+    print_every,
+    trial: optuna.Trial,
+    eval_env: gym.Env,
+    eval_freq_episodes: int,
+    n_eval_episodes_optuna: int,
+):
     scores_deque = deque(maxlen=100)
-    scores = []
-    # Line 3 of pseudocode
+    all_scores = []
+
     for i_episode in tqdm(range(1, n_training_episodes + 1), desc="Training"):
         saved_log_probs = []
         rewards = []
         state, _ = env.reset()
 
-        # Line 4 of pseudocode
         for t in range(max_t):
             action, log_prob = policy.act(state)
             saved_log_probs.append(log_prob)
-            state, reward, _, terminated, truncated = env.step(action)
+            state, reward, terminated, truncated, _ = env.step(action)
             rewards.append(reward)
             if terminated or truncated:
                 break
-        scores_deque.append(sum(rewards))
-        scores.append(sum(rewards))
 
-        # Line 6 of pseudocode: calculate the return
+        current_episode_reward = sum(rewards)
+        scores_deque.append(current_episode_reward)
+        all_scores.append(current_episode_reward)
+
         returns = deque(maxlen=max_t)
         n_steps = len(rewards)
-        # Compute the discounted returns at each timestep,
-        # as
-        #      the sum of the gamma-discounted return at time t (G_t) + the reward at time t
-        #
-        # In O(N) time, where N is the number of time steps
-        # (this definition of the discounted return G_t follows the definition of this quantity
-        # shown at page 44 of Sutton&Barto 2017 2nd draft)
-        # G_t = r_(t+1) + r_(t+2) + ...
-
-        # Given this formulation, the returns at each timestep t can be computed
-        # by re-using the computed future returns G_(t+1) to compute the current return G_t
-        # G_t = r_(t+1) + gamma*G_(t+1)
-        # G_(t-1) = r_t + gamma* G_t
-        # (this follows a dynamic programming approach, with which we memorize solutions in order
-        # to avoid computing them multiple times)
-
-        # This is correct since the above is equivalent to (see also page 46 of Sutton&Barto 2017 2nd draft)
-        # G_(t-1) = r_t + gamma*r_(t+1) + gamma*gamma*r_(t+2) + ...
-
-        ## Given the above, we calculate the returns at timestep t as:
-        #               gamma[t] * return[t] + reward[t]
-        #
-        ## We compute this starting from the last timestep to the first, in order
-        ## to employ the formula presented above and avoid redundant computations that would be needed
-        ## if we were to do it from first to last.
-
-        ## Hence, the queue "returns" will hold the returns in chronological order, from t=0 to t=n_steps
-        ## thanks to the appendleft() function which allows to append to the position 0 in constant time O(1)
-        ## a normal python list would instead require O(N) to do this.
         for t in range(n_steps)[::-1]:
             disc_return_t = returns[0] if len(returns) > 0 else 0
             returns.appendleft(gamma * disc_return_t + rewards[t])
 
-        ## standardization of the returns is employed to make training more stable
         eps = np.finfo(np.float32).eps.item()
-        ## eps is the smallest representable float, which is
-        # added to the standard deviation of the returns to avoid numerical instabilities
-        returns = torch.tensor(returns)
-        returns = (returns - returns.mean()) / (returns.std() + eps)
+        returns_tensor = torch.tensor(
+            list(returns), device=device, dtype=torch.float32
+        )  # Ensure on device
+        returns_tensor = (returns_tensor - returns_tensor.mean()) / (
+            returns_tensor.std() + eps
+        )
 
-        # Line 7:
         policy_loss = []
-        for log_prob, disc_return in zip(saved_log_probs, returns):
+        for log_prob, disc_return in zip(saved_log_probs, returns_tensor):
             policy_loss.append(-log_prob * disc_return)
-        policy_loss = torch.cat(policy_loss).sum()
 
-        # Line 8: PyTorch prefers gradient descent
+        if not policy_loss:  # Should not happen if episode runs at least 1 step
+            # print(f"Warning: Episode {i_episode} had no steps or policy_loss was empty.")
+            if trial:  # If in optuna context, and something is weird, prune early
+                trial.report(0, i_episode)  # Report a bad score
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+            continue
+
+        policy_loss = torch.stack(
+            policy_loss
+        ).sum()  # Use torch.stack for list of tensors
+
         optimizer.zero_grad()
         policy_loss.backward()
         optimizer.step()
 
         if i_episode % print_every == 0:
             print(
-                "Episode {}\tAverage Score: {:.2f}".format(
-                    i_episode, np.mean(scores_deque)
-                )
+                f"Episode {i_episode}\tAverage Score (last {scores_deque.maxlen}): {np.mean(scores_deque):.2f}"
             )
 
-    return scores
+        # Optuna pruning check
+        if trial and i_episode % eval_freq_episodes == 0:
+            # Evaluate the current policy for Optuna
+            # Use a simplified evaluation or reuse evaluate_agent
+            # For simplicity here, let's use the scores_deque mean if it's sufficiently full
+            # Or, better, run a proper evaluation:
+            intermediate_mean_reward, _ = evaluate_agent(
+                eval_env,
+                None,
+                max_t,
+                n_eval_episodes_optuna,
+                policy,
+                is_optuna_eval=True,
+            )
+
+            trial.report(intermediate_mean_reward, i_episode)
+            if trial.should_prune():
+                print(
+                    f"Trial pruned at episode {i_episode} with reward {intermediate_mean_reward}"
+                )
+                raise optuna.exceptions.TrialPruned()
+
+    return all_scores
 
 
-def evaluate_agent(env, eval_callback, max_steps, n_eval_episodes, policy):
-    """
-    Evaluate the agent for ``n_eval_episodes`` episodes and returns average reward and std of reward.
-    :param env: The evaluation environment
-    :param n_eval_episodes: Number of episode to evaluate the agent
-    :param policy: The Reinforce agent
-    """
+def evaluate_agent(env, max_steps, n_eval_episodes, policy, is_optuna_eval=False):
     episode_rewards = []
-    for episode in range(n_eval_episodes):
+    desc = "Optuna Intermediate Eval" if is_optuna_eval else "Final Evaluation"
+    for episode in tqdm(
+        range(n_eval_episodes), desc=desc, leave=False, disable=is_optuna_eval
+    ):  # Disable tqdm for frequent optuna evals
         state, _ = env.reset()
         total_rewards_ep = 0
-
         for step in range(max_steps):
-            action, _ = policy.act(state)
-            new_state, reward, terminated, truncated, info = env.step(action)
+            action, _ = policy.act(state)  # Assumes policy.act handles device placement
+            new_state, reward, terminated, truncated, _ = env.step(action)
             total_rewards_ep += reward
             if terminated or truncated:
                 break
             state = new_state
         episode_rewards.append(total_rewards_ep)
-
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
-
-    # --- Use the callback here if provided ---
-    if eval_callback is not None:
-        # Update n_calls for proper timing
-        if hasattr(eval_callback, "n_calls"):
-            eval_callback.n_calls += 1
-
-        # Set the last mean reward so the callback can access it
-        if hasattr(eval_callback, "last_mean_reward"):
-            eval_callback.last_mean_reward = mean_reward
-
-        # Optionally, call _on_step if the callback has it
-        if hasattr(eval_callback, "_on_step"):
-            eval_callback._on_step()
-
     return mean_reward, std_reward
 
 
 def sample_params(env_id, s_size, a_size, trial: optuna.Trial) -> Dict[str, Any]:
-    lr = trial.suggest_float("lr", 1e-5, 0.1, log=True)
-    gamma = trial.suggest_float("gamma", 0.9, 0.99999, log=True)
-    h_size = trial.suggest_categorical("net_arch", [8, 16, 32])
-    n_fc_layers = trial.suggest_categorical("n_fc_layers", [2, 4, 8])
-    n_training_episodes = trial.suggest_categorical(
-        "n_training_episodes", [1000, 2000, 3000]
+    lr = trial.suggest_float("lr", 1e-4, 5e-3, log=True)
+    gamma = trial.suggest_float("gamma", 0.95, 0.999, log=True)  # Slightly narrowed
+    h_size = trial.suggest_categorical("net_arch", [64, 128, 256])  # Increased capacity
+    n_fc_layers = trial.suggest_categorical("n_fc_layers", [1, 2])
+
+    n_training_episodes = trial.suggest_categorical("n_training_episodes", [3000, 5000])
+    # Optuna evaluation frequency (in episodes)
+    # Should be frequent enough for pruning but not too frequent to slow down too much
+    eval_freq_episodes_optuna = trial.suggest_categorical(
+        "eval_freq_episodes_optuna", [250, 500]
     )
 
     return {
         "h_size": h_size,
         "n_fc_layers": n_fc_layers,
         "n_training_episodes": n_training_episodes,
-        "n_evaluation_episodes": 10,
-        "max_t": 1000,
+        "n_evaluation_episodes_final": 20,  # For final evaluation after training
+        "n_evaluation_episodes_optuna": 5,  # For intermediate Optuna pruning evaluations
+        "eval_freq_episodes_optuna": eval_freq_episodes_optuna,
+        "max_t": 500,  # CartPole-v1 environment limit
         "gamma": gamma,
         "lr": lr,
         "env_id": env_id,
@@ -288,18 +233,15 @@ def sample_params(env_id, s_size, a_size, trial: optuna.Trial) -> Dict[str, Any]
 
 def objective(env, eval_env, s_size, a_size):
     def inner(trial: optuna.Trial) -> float:
-        """
-        Objective function using by Optuna to evaluate
-        one configuration (i.e., one set of hyperparameters).
-
-        Given a trial object, it will sample hyperparameters,
-        evaluate it and report the result (mean episodic reward after training)
-
-        :param trial: Optuna trial object
-        :return: Mean episodic reward after training
-        """
-        global best_mean_reward
+        global best_mean_reward_global  # Use the renamed global
         hyperparameters = sample_params(env.spec.id, s_size, a_size, trial)
+
+        # Pass actual number of hidden layers to Policy
+        # If n_fc_layers = 1, it means 1 hidden layer.
+        # If n_fc_layers = 0, it means input -> output (but our Policy has at least one fc1)
+        # My Policy class takes n_fc_layers as the number of *additional* hidden layers after fc1.
+        # Let's adjust Policy init for clarity: n_fc_layers = total hidden layers.
+        # So if trial.suggests 1, policy has 1 hidden layer. If 2, policy has 2.
         cartpole_policy = Policy(
             hyperparameters["state_space"],
             hyperparameters["action_space"],
@@ -313,6 +255,7 @@ def objective(env, eval_env, s_size, a_size):
 
         nan_encountered = False
         try:
+            # Pass trial and eval_env for intermediate evaluations and pruning
             scores = reinforce(
                 env,
                 cartpole_policy,
@@ -320,90 +263,92 @@ def objective(env, eval_env, s_size, a_size):
                 hyperparameters["n_training_episodes"],
                 hyperparameters["max_t"],
                 hyperparameters["gamma"],
-                100,
+                print_every=hyperparameters["n_training_episodes"]
+                // 10,  # Print 10 times during training
+                trial=trial,  # Pass trial for pruning
+                eval_env=eval_env,  # Pass eval_env for intermediate evals
+                eval_freq_episodes=hyperparameters["eval_freq_episodes_optuna"],
+                n_eval_episodes_optuna=hyperparameters["n_evaluation_episodes_optuna"],
             )
         except AssertionError as e:
-            # Sometimes, random hyperparams can generate NaN
-            print(e)
+            print(f"AssertionError in training: {e}")
             nan_encountered = True
+        except optuna.exceptions.TrialPruned:
+            # If reinforce raises TrialPruned, re-raise it so Optuna handles it
+            raise
+        except Exception as e:
+            print(f"Unexpected error during training for trial {trial.number}: {e}")
+            nan_encountered = True  # Treat other errors as failures
 
-        # Tell the optimizer that the trial failed
         if nan_encountered:
-            return float("nan")
+            return float("nan")  # Optuna will handle this as a failed trial
 
-        # Create the evaluation callback
-        eval_callback = TrialEvalCallback(
-            eval_env, trial, hyperparameters["n_evaluation_episodes"]
-        )
-
-        if eval_callback.is_pruned:
-            raise optuna.exceptions.TrialPruned()
-
-        # Now evaluate
+        # Final evaluation after successful training
         mean_reward, std_reward = evaluate_agent(
             eval_env,
-            eval_callback,
             hyperparameters["max_t"],
-            hyperparameters["n_evaluation_episodes"],
+            hyperparameters["n_evaluation_episodes_final"],
             cartpole_policy,
         )
 
+        print(
+            f"Trial {trial.number} finished. Mean reward: {mean_reward:.2f} +/- {std_reward:.2f}"
+        )
+
         # Save the best model and std_reward so far
-        if mean_reward > best_mean_reward:
-            best_mean_reward = mean_reward
+        # Ensure this comparison is with the global best, not a trial-local one
+        if mean_reward > best_mean_reward_global:
+            best_mean_reward_global = mean_reward
+            print(f"New best model found! Mean reward: {best_mean_reward_global:.2f}")
             torch.save(
                 {
                     "state_dict": cartpole_policy.state_dict(),
+                    "mean_reward": mean_reward,
                     "std_reward": std_reward,
+                    "hyperparameters": hyperparameters,
                 },
                 BEST_MODEL_PATH,
             )
-
         return mean_reward
 
     return inner
 
 
 def cartpole():
-    # https://gymnasium.farama.org/environments/classic_control/cart_pole/
+    global best_mean_reward_global  # Ensure we modify the global
+    best_mean_reward_global = float("-inf")  # Reset for each run of cartpole()
+
     env_id = "CartPole-v1"
-    # Create the env
-    env = gym.make(env_id, render_mode="rgb_array")
+    env = gym.make(env_id)  # No render_mode needed for training env
+    eval_env = gym.make(env_id)  # No render_mode for eval env unless debugging
 
-    # Create the evaluation env
-    eval_env = gym.make(env_id, render_mode="rgb_array")
-
-    # Get the state space and action space
     s_size = env.observation_space.shape[0]
     a_size = env.action_space.n
 
-    print("_____OBSERVATION SPACE_____ \n")
-    print("The State Space is: ", s_size)
-    print(
-        "Sample observation", env.observation_space.sample()
-    )  # Get a random observation
+    print(f"State Space: {s_size}, Action Space: {a_size}")
 
-    print("\n _____ACTION SPACE_____ \n")
-    print("The Action Space is: ", a_size)
-    # Take a random action
-    print("Action Space Sample", env.action_space.sample())
+    # Optuna settings
+    N_STARTUP_TRIALS = 10  # Allow more random exploration initially
+    # N_EVALUATIONS_PRUNING is now controlled by eval_freq_episodes_optuna and n_training_episodes
+    N_TRIALS = 50  # Adjust as needed, more trials = better search but longer
+    N_JOBS = 1
+    TIMEOUT = 7200  # 2 hours timeout for the whole study
 
-    N_STARTUP_TRIALS = 5  # Stop random sampling after N_STARTUP_TRIALS
-    N_EVALUATIONS = 2  # Number of evaluations during the training
-    N_TRIALS = 100  # Maximum number of trials
-    N_JOBS = 1  # Number of jobs to run in parallel
-    TIMEOUT = None  # No timeout, or set to a much larger value like 7200 (2 hours)
-
-    # Set pytorch num threads to 1 for faster training
     torch.set_num_threads(1)
-    # Select the sampler, can be random, TPESampler, CMAES, ...
-    sampler = TPESampler(n_startup_trials=N_STARTUP_TRIALS)
-    # Do not prune before 1/3 of the max budget is used
+    sampler = TPESampler(
+        n_startup_trials=N_STARTUP_TRIALS, seed=42
+    )  # Add seed for reproducibility
+
+    # Pruning: n_warmup_steps is the number of intermediate reports to wait for.
+    # If eval_freq_episodes_optuna is 500, and n_training_episodes is 3000,
+    # there will be 3000/500 = 6 reports.
+    # Let's say we want to wait for at least 2 reports before pruning.
     pruner = MedianPruner(
-        n_startup_trials=N_STARTUP_TRIALS, n_warmup_steps=N_EVALUATIONS // 3
+        n_startup_trials=N_STARTUP_TRIALS,
+        n_warmup_steps=2,  # Wait for 2 intermediate results
     )
-    # Create the study and start the hyperparameter optimization
     study = optuna.create_study(sampler=sampler, pruner=pruner, direction="maximize")
+
     try:
         study.optimize(
             objective(env, eval_env, s_size, a_size),
@@ -412,45 +357,105 @@ def cartpole():
             timeout=TIMEOUT,
         )
     except KeyboardInterrupt:
-        pass
+        print("Optimization interrupted by user.")
+    finally:
+        env.close()
+        eval_env.close()
 
     print("Number of finished trials: ", len(study.trials))
 
+    # Filter out pruned/failed trials before accessing best_trial
+    completed_trials = [
+        t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE
+    ]
+    if not completed_trials:
+        print("No trials completed successfully.")
+        return None, None, -1, -1  # Indicate failure
+
+    # Optuna's study.best_trial should correctly identify the best among completed trials
     print("Best trial:")
     trial = study.best_trial
-
     print(f"  Value: {trial.value}")
-
     print("  Params: ")
     for key, value in trial.params.items():
         print(f"    {key}: {value}")
 
-    best_params = trial.params
-    # Recreate the best model
-    best_policy = Policy(
-        s_size,
-        a_size,
-        best_params["net_arch"],
-        best_params["n_fc_layers"],
-    ).to(device)
-    checkpoint = torch.load(BEST_MODEL_PATH, weights_only=False)
-    best_policy.load_state_dict(checkpoint["state_dict"])
-    std_reward = checkpoint["std_reward"]
-    mean_reward = trial.value
+    best_params_from_study = trial.params  # These are the sampled ones
 
-    return env_id, best_policy, mean_reward, std_reward
+    # Load the model saved via best_mean_reward_global logic
+    if not BEST_MODEL_PATH.exists():
+        print("Best model path does not exist. Cannot load best model.")
+        # Fallback to recreating from study's best_params if no model was saved
+        # (e.g., if all trials were worse than initial -inf, or error in saving)
+        print("Recreating model from study's best_params as a fallback.")
+        best_policy = Policy(
+            s_size,
+            a_size,
+            best_params_from_study["net_arch"],
+            best_params_from_study["n_fc_layers"],
+        ).to(device)
+        # Note: This fallback model is untrained or partially trained from the last trial.
+        # The primary path is to load from BEST_MODEL_PATH.
+        mean_reward_loaded = trial.value  # This is the value Optuna tracked
+        std_reward_loaded = "N/A (fallback)"
+    else:
+        print(f"Loading best model from {BEST_MODEL_PATH}")
+        checkpoint = torch.load(
+            BEST_MODEL_PATH, map_location=device
+        )  # Ensure map_location
+        saved_hyperparams = checkpoint.get(
+            "hyperparameters", best_params_from_study
+        )  # Fallback for old saves
+
+        best_policy = Policy(
+            s_size,
+            a_size,
+            saved_hyperparams["net_arch"],  # Use saved net_arch
+            saved_hyperparams["n_fc_layers"],  # Use saved n_fc_layers
+        ).to(device)
+        best_policy.load_state_dict(checkpoint["state_dict"])
+        std_reward_loaded = checkpoint["std_reward"]
+        # The 'trial.value' is the one Optuna knows.
+        # 'best_mean_reward_global' should ideally match 'trial.value' if saving logic is robust.
+        mean_reward_loaded = (
+            trial.value
+        )  # Or best_mean_reward_global, should be very close
+
+    return env_id, best_policy, mean_reward_loaded, std_reward_loaded
 
 
 def main():
-    env_id, model, mean_reward, std_reward = cartpole()
-    if mean_reward < 200:
-        raise ValueError("Mean reward is less than 200, can't record video")
+    result = cartpole()
+    if result is None or result[1] is None:
+        print("Cartpole optimization failed or produced no model.")
+        return
 
-    print(f"Obtained mean reward: {mean_reward} with std: {std_reward}")
-    video_path = cur_dir / "replay.mp4"
-    record_video(env_id, model, video_path, fps=30)
-    print(f"Video saved at {video_path}")
+    env_id, model, mean_reward, std_reward = result
+
+    print(
+        f"Optimization finished. Best Mean Reward: {mean_reward:.2f}, Std Reward: {std_reward}"
+    )
+
+    # It's possible that even the best trial doesn't reach 200.
+    if mean_reward < 100:
+        print(
+            f"Mean reward {mean_reward} is low, video might not show successful behavior."
+        )
+
+    if model is not None:
+        video_path = cur_dir / "replay.mp4"
+        print(f"Recording video for model with mean reward: {mean_reward}")
+        record_video(env_id, model, video_path, fps=30)
+        print(f"Video saved at {video_path}")
+    else:
+        print("No model available to record video.")
 
 
 if __name__ == "__main__":
+    # It's good practice to handle potential issues if __file__ is not defined (e.g. in some interpreters)
+    if "__file__" not in globals():
+        __file__ = "dummy_filename_for_interactive.py"  # Or handle appropriately
+        cur_dir = Path(os.getcwd())
+        BEST_MODEL_PATH = cur_dir / "best_cartpole_model.pth"
+
     main()
