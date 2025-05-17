@@ -2,6 +2,7 @@
 # pixi environments
 .pixi
 replay.mp4
+best_cartpole_model.pth
 .ipynb_checkpoints
 *.egg-info
 

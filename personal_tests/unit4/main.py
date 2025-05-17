@@ -7,7 +7,6 @@ from typing import Any, Dict
 from collections import deque
 from pathlib import Path
 
-# PyTorch
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,7 +24,8 @@ from optuna.visualization import plot_optimization_history, plot_param_importanc
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-BEST_MODEL_PATH = "best_cartpole_model.pth"
+cur_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+BEST_MODEL_PATH = cur_dir / "best_cartpole_model.pth"
 best_mean_reward = float("-inf")
 
 
@@ -87,15 +87,15 @@ class TrialEvalCallback:
         deterministic: bool = True,
         verbose: int = 0,
     ):
-
-        super().__init__(
-            eval_env=eval_env,
-            n_eval_episodes=n_eval_episodes,
-            eval_freq=eval_freq,
-            deterministic=deterministic,
-            verbose=verbose,
-        )
+        # Initialize attributes directly without super() call
+        self.eval_env = eval_env
         self.trial = trial
+        self.n_eval_episodes = n_eval_episodes
+        self.eval_freq = eval_freq
+        self.deterministic = deterministic
+        self.verbose = verbose
+        self.n_calls = 0
+        self.last_mean_reward = -float("inf")
         self.eval_idx = 0
         self.is_pruned = False
 
@@ -246,11 +246,17 @@ def evaluate_agent(env, eval_callback, max_steps, n_eval_episodes, policy):
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
 
-    # --- Use the callback here ---
+    # --- Use the callback here if provided ---
     if eval_callback is not None:
+        # Update n_calls for proper timing
+        if hasattr(eval_callback, "n_calls"):
+            eval_callback.n_calls += 1
+
         # Set the last mean reward so the callback can access it
-        eval_callback.last_mean_reward = mean_reward
-        # Optionally, call a method if the callback has one
+        if hasattr(eval_callback, "last_mean_reward"):
+            eval_callback.last_mean_reward = mean_reward
+
+        # Optionally, call _on_step if the callback has it
         if hasattr(eval_callback, "_on_step"):
             eval_callback._on_step()
 
@@ -286,7 +292,7 @@ def sample_params(env_id, s_size, a_size, trial: optuna.Trial) -> Dict[str, Any]
     }
 
 
-def objective(env, s_size, a_size):
+def objective(env, eval_env, s_size, a_size):
     def inner(trial: optuna.Trial) -> float:
         """
         Objective function using by Optuna to evaluate
@@ -310,6 +316,8 @@ def objective(env, s_size, a_size):
         cartpole_optimizer = optim.Adam(
             cartpole_policy.parameters(), lr=hyperparameters["lr"]
         )
+
+        nan_encountered = False
         try:
             scores = reinforce(
                 env,
@@ -329,12 +337,13 @@ def objective(env, s_size, a_size):
         if nan_encountered:
             return float("nan")
 
-        if eval_callback.is_pruned:
-            raise optuna.exceptions.TrialPruned()
-
+        # Create the evaluation callback
         eval_callback = TrialEvalCallback(
             eval_env, trial, hyperparameters["n_evaluation_episodes"]
         )
+
+        if eval_callback.is_pruned:
+            raise optuna.exceptions.TrialPruned()
 
         # Now evaluate
         mean_reward, std_reward = evaluate_agent(
@@ -389,7 +398,7 @@ def cartpole():
     N_EVALUATIONS = 2  # Number of evaluations during the training
     N_TRIALS = 100  # Maximum number of trials
     N_JOBS = 1  # Number of jobs to run in parallel
-    TIMEOUT = 120  # Timeout in seconds
+    TIMEOUT = None  # No timeout, or set to a much larger value like 7200 (2 hours)
 
     # Set pytorch num threads to 1 for faster training
     torch.set_num_threads(1)
@@ -403,7 +412,7 @@ def cartpole():
     study = optuna.create_study(sampler=sampler, pruner=pruner, direction="maximize")
     try:
         study.optimize(
-            objective(env, s_size, a_size),
+            objective(env, eval_env, s_size, a_size),
             n_trials=N_TRIALS,
             n_jobs=N_JOBS,
             timeout=TIMEOUT,
@@ -430,7 +439,7 @@ def cartpole():
         best_params["net_arch"],
         best_params["n_fc_layers"],
     ).to(device)
-    checkpoint = torch.load(BEST_MODEL_PATH)
+    checkpoint = torch.load(BEST_MODEL_PATH, weights_only=False)
     best_policy.load_state_dict(checkpoint["state_dict"])
     std_reward = checkpoint["std_reward"]
     mean_reward = trial.value
@@ -444,7 +453,6 @@ def main():
         raise ValueError("Mean reward is less than 200, can't record video")
 
     print(f"Obtained mean reward: {mean_reward} with std: {std_reward}")
-    cur_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     video_path = cur_dir / "replay.mp4"
     record_video(env_id, model, video_path, fps=30)
     print(f"Video saved at {video_path}")
