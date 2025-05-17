@@ -390,7 +390,7 @@ def cartpole():
         best_policy = Policy(
             s_size,
             a_size,
-            best_params_from_study["net_arch"],
+            best_params_from_study["h_size"],
             best_params_from_study["n_fc_layers"],
         ).to(device)
         # Note: This fallback model is untrained or partially trained from the last trial.
@@ -400,17 +400,15 @@ def cartpole():
     else:
         print(f"Loading best model from {BEST_MODEL_PATH}")
         checkpoint = torch.load(
-            BEST_MODEL_PATH, map_location=device
-        )  # Ensure map_location
-        saved_hyperparams = checkpoint.get(
-            "hyperparameters", best_params_from_study
-        )  # Fallback for old saves
+            BEST_MODEL_PATH, map_location=device, weights_only=False
+        )
+        saved_hyperparams = checkpoint.get("hyperparameters", best_params_from_study)
 
         best_policy = Policy(
             s_size,
             a_size,
-            saved_hyperparams["net_arch"],  # Use saved net_arch
-            saved_hyperparams["n_fc_layers"],  # Use saved n_fc_layers
+            saved_hyperparams["h_size"],
+            saved_hyperparams["n_fc_layers"],
         ).to(device)
         best_policy.load_state_dict(checkpoint["state_dict"])
         std_reward_loaded = checkpoint["std_reward"]
