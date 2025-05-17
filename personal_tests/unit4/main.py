@@ -264,28 +264,22 @@ def evaluate_agent(env, eval_callback, max_steps, n_eval_episodes, policy):
 
 
 def sample_params(env_id, s_size, a_size, trial: optuna.Trial) -> Dict[str, Any]:
-    learning_rate = trial.suggest_float("lr", 1e-5, 0.1, log=True)
+    lr = trial.suggest_float("lr", 1e-5, 0.1, log=True)
     gamma = trial.suggest_float("gamma", 0.9, 0.99999, log=True)
     h_size = trial.suggest_categorical("net_arch", [8, 16, 32])
     n_fc_layers = trial.suggest_categorical("n_fc_layers", [2, 4, 8])
-    activation = trial.suggest_categorical("activation", ["relu", "tanh"])
-    optimizer = trial.suggest_categorical("optimizer", ["adam", "rmsprop"])
-    entropy_coef = trial.suggest_float("entropy_coef", 0.0, 0.05)
     n_training_episodes = trial.suggest_categorical(
-        "n_training_episodes", [1000, 2000, 4000]
+        "n_training_episodes", [1000, 2000, 3000]
     )
 
     return {
         "h_size": h_size,
         "n_fc_layers": n_fc_layers,
-        "activation": activation,
-        "optimizer": optimizer,
-        "entropy_coef": entropy_coef,
         "n_training_episodes": n_training_episodes,
         "n_evaluation_episodes": 10,
         "max_t": 1000,
         "gamma": gamma,
-        "lr": learning_rate,
+        "lr": lr,
         "env_id": env_id,
         "state_space": s_size,
         "action_space": a_size,
