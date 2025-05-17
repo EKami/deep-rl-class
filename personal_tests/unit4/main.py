@@ -164,7 +164,6 @@ def reinforce(
             # Or, better, run a proper evaluation:
             intermediate_mean_reward, _ = evaluate_agent(
                 eval_env,
-                None,
                 max_t,
                 n_eval_episodes_optuna,
                 policy,
@@ -417,9 +416,7 @@ def cartpole():
         std_reward_loaded = checkpoint["std_reward"]
         # The 'trial.value' is the one Optuna knows.
         # 'best_mean_reward_global' should ideally match 'trial.value' if saving logic is robust.
-        mean_reward_loaded = (
-            trial.value
-        )  # Or best_mean_reward_global, should be very close
+        mean_reward_loaded = trial.value
 
     return env_id, best_policy, mean_reward_loaded, std_reward_loaded
 
