@@ -9,12 +9,12 @@ version = "0.1.0"
 cuda = "12.4"
 
 [dependencies]
-python = "3.11.*"
+python = ">=3.11.0"
 jupyterlab = "*"
 pytorch = "*"
 numpy = "*"
 ipywidgets = "*"
-tqdm = "*"
+tqdm = ">=4.67.1,<5"
 moviepy = ">=1.0.3,<2"
 pygame = "*"
 huggingface_hub = "*"
@@ -29,5 +29,8 @@ xvfbwrapper = ">=0.2.10,<0.3"
 optuna = ">=4.3.0,<5"
 
 [pypi-dependencies]
-gymnasium = { version = "*", extras = ["atari"] }
+gymnasium = { version = "*"}
 pyvirtualdisplay = ">=3.0, <4"
+panda-gym = ">=3.0.7, <4"
+huggingface-sb3 = ">=3.0, <4"
+stable-baselines3 = { version = "*", extras = ["extra"] }
