@@ -1,0 +1,8 @@
+
+training-envs-executables
+
+# pixi environments
+.pixi
+.ipynb_checkpoints
+*.egg-info
+logs
