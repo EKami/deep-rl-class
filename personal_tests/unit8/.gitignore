@@ -1,0 +1,12 @@
+best_model
+checkpoints
+videos
+logs
+vec_normalize.pkl
+a2c-PandaReachDense-v3.zip
+
+# pixi environments
+.pixi
+.ipynb_checkpoints
+*.egg-info
+logs

@@ -1,0 +1,21 @@
+[workspace]
+authors = ["Tuatini Godard <email@tuatini.me>"]
+channels = ["conda-forge"]
+name = "unit1"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.4"
+
+[dependencies]
+python = ">=3.11.0"
+pytorch = "2.5.*"
+numpy = ">=1.18.1,<2"
+tqdm = ">=4.67.1,<5"
+
+[pypi-dependencies]
+gymnasium = { version = "*"}
+pyvirtualdisplay = ">=3.0, <4"
+sample-factory = ">=2"
+vizdoom = "*"
